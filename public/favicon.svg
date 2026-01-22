@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <!-- Shield background -->
+  <path d="M32 4L8 14v18c0 14 10 24 24 28 14-4 24-14 24-28V14L32 4z" fill="#1e293b"/>
+  <!-- Shield outline -->
+  <path d="M32 4L8 14v18c0 14 10 24 24 28 14-4 24-14 24-28V14L32 4z" stroke="#22d3ee" stroke-width="2.5" fill="none"/>
+  <!-- Document icon -->
+  <rect x="22" y="18" width="20" height="26" rx="2" fill="#22d3ee" opacity="0.2"/>
+  <rect x="22" y="18" width="20" height="26" rx="2" stroke="#22d3ee" stroke-width="1.5" fill="none"/>
+  <!-- Document lines -->
+  <line x1="26" y1="26" x2="38" y2="26" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="26" y1="31" x2="38" y2="31" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="26" y1="36" x2="34" y2="36" stroke="#22d3ee" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
