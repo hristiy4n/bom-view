@@ -27,5 +27,4 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
-          body_from_tag: true
           files: bom-view-${{ github.ref_name }}-dist.tar.gz
