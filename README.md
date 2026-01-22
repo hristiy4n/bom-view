@@ -31,6 +31,53 @@ This application is designed to load SBOMs dynamically at runtime. To add your o
     ]
     ```
 
+The application will then fetch the `index.json` to populate the SBOM selection dropdown and load the corresponding file when selected.
+
+## Example GitLab Pages CI/CD
+
+Below is an example `.gitlab-ci.yml` configuration that fetches a pre-built release, extracts SBOMs, and dynamically creates the `index.json` for deployment.
+
+```yaml
+stages:
+  - sbom
+  - deploy
+
+create_sbom:
+  stage: sbom
+  image: alpine:3.23.2
+  before_script:
+    - apk add syft
+  script:
+    - mkdir sboms
+    - syft alpine:3.19 -o cyclonedx-json=sboms/alpine-cyclone.json
+  artifacts:
+    paths:
+      - sboms
+
+pages:
+  stage: deploy
+  image: alpine:3.23.2
+  before_script:
+    - apk add curl jq
+  script:
+    - curl -L https://github.com/hristiy4n/bom-view/releases/download/v0.1.0/bom-view-v0.1.0-dist.tar.gz | tar zx
+    - mv dist public
+    - mkdir public/sboms
+    - cp sboms/* public/sboms
+    - |
+      find sboms -maxdepth 1 -type f -name '*.json' ! -name 'index.json' \
+      | sed 's|.*/||' \
+      | sort \
+      | jq -R . | jq -s . > public/sboms/index.json
+  needs:
+    - job: create_sbom
+  artifacts:
+    paths:
+      - public
+```
+
+You can see a live example of this configuration in action here: [https://security-dashboard-a9b4f8.gitlab.io/](https://security-dashboard-a9b4f8.gitlab.io/)
+
 ### Required Directory Structure
 
 Your final deployment directory should have the following structure:
@@ -46,5 +93,3 @@ dist/
     ├── sbom2.json
     └── ...
 ```
-
-The application will then fetch the `index.json` to populate the SBOM selection dropdown and load the corresponding file when selected.
