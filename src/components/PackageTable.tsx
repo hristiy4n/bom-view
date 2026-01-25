@@ -62,6 +62,7 @@ interface BomDependency {
 }
 
 interface CycloneDXBom {
+  bomFormat: "CycloneDX";
   metadata: {
     component: {
       name: string;
@@ -70,6 +71,31 @@ interface CycloneDXBom {
   };
   components: Component[];
   dependencies?: BomDependency[];
+}
+
+interface SpdxPackage {
+  name: string;
+  SPDXID: string;
+  versionInfo: string;
+  licenseDeclared: string;
+  description: string;
+  externalRefs?: {
+    referenceCategory: string;
+    referenceType: string;
+    referenceLocator: string;
+  }[];
+}
+
+interface SpdxRelationship {
+  spdxElementId: string;
+  relationshipType: string;
+  relatedSpdxElement: string;
+}
+
+interface SpdxBom {
+  spdxVersion: string;
+  packages: SpdxPackage[];
+  relationships?: SpdxRelationship[];
 }
 
 export interface Package {
@@ -89,6 +115,27 @@ const ITEMS_PER_PAGE = 8;
 
 import { ecosystemMapping } from "@/lib/ecosystems";
 import { OSVResponse, OSVulnerability, Severity } from "@/types/osv";
+
+enum SbomFormat {
+  CycloneDX,
+  SPDX,
+  Unsupported,
+}
+
+type SbomData = {
+  bomFormat?: "CycloneDX";
+  spdxVersion?: string;
+};
+
+const identifySbomFormat = (data: SbomData): SbomFormat => {
+  if (data.bomFormat === "CycloneDX") {
+    return SbomFormat.CycloneDX;
+  }
+  if (data.spdxVersion) {
+    return SbomFormat.SPDX;
+  }
+  return SbomFormat.Unsupported;
+};
 
 const getPaginationRange = (
   totalPages: number,
@@ -137,7 +184,10 @@ const getPaginationRange = (
   return [];
 };
 
-const processBomData = (data: CycloneDXBom, sourceName: string): Package[] => {
+const processCycloneDxData = (
+  data: CycloneDXBom,
+  sourceName: string,
+): Package[] => {
   const componentsMap = new Map<string, Component>();
   data.components.forEach((component) => {
     componentsMap.set(component["bom-ref"], component);
@@ -208,6 +258,126 @@ const processBomData = (data: CycloneDXBom, sourceName: string): Package[] => {
     });
 };
 
+const buildSpdxDependencyTree = (
+  spdxElementId: string,
+  spdxPackagesMap: Map<string, SpdxPackage>,
+  spdxRelationships: SpdxRelationship[],
+  visited: Set<string> = new Set(),
+): Dependency => {
+  const pkg = spdxPackagesMap.get(spdxElementId);
+  if (!pkg) {
+    return { name: spdxElementId, version: "unknown", children: [] };
+  }
+
+  if (visited.has(spdxElementId)) {
+    return { name: pkg.name, version: pkg.versionInfo, children: [] };
+  }
+  visited.add(spdxElementId);
+
+  const children: Dependency[] = [];
+  const directRelationships = spdxRelationships.filter(
+    (rel) =>
+      rel.spdxElementId === spdxElementId &&
+      rel.relationshipType === "DEPENDS_ON",
+  );
+
+  for (const rel of directRelationships) {
+    const childDependency = buildSpdxDependencyTree(
+      rel.relatedSpdxElement,
+      spdxPackagesMap,
+      spdxRelationships,
+      new Set(visited),
+    );
+    children.push(childDependency);
+  }
+
+  return {
+    name: pkg.name,
+    version: pkg.versionInfo,
+    children: children,
+  };
+};
+
+const processSpdxData = (data: SpdxBom, sourceName: string): Package[] => {
+  const spdxPackagesMap = new Map<string, SpdxPackage>();
+  data.packages.forEach((pkg) => {
+    spdxPackagesMap.set(pkg.SPDXID, pkg);
+  });
+
+  const dependencyMap = new Map<string, string[]>();
+  if (data.relationships) {
+    for (const rel of data.relationships) {
+      let parentId: string | undefined;
+      let childId: string | undefined;
+
+      if (
+        rel.relationshipType === "DEPENDS_ON" ||
+        rel.relationshipType === "CONTAINS"
+      ) {
+        parentId = rel.spdxElementId;
+        childId = rel.relatedSpdxElement;
+      } else if (rel.relationshipType === "DEPENDENCY_OF") {
+        parentId = rel.relatedSpdxElement;
+        childId = rel.spdxElementId;
+      }
+
+      if (parentId && childId) {
+        if (!dependencyMap.has(parentId)) {
+          dependencyMap.set(parentId, []);
+        }
+        dependencyMap.get(parentId)!.push(childId);
+      }
+    }
+  }
+
+  const buildSpdxDependencyTree = (
+    spdxElementId: string,
+    visited: Set<string> = new Set(),
+  ): Dependency => {
+    const pkg = spdxPackagesMap.get(spdxElementId);
+    if (!pkg) {
+      return { name: spdxElementId, version: "unknown", children: [] };
+    }
+
+    if (visited.has(spdxElementId)) {
+      return { name: pkg.name, version: pkg.versionInfo, children: [] };
+    }
+    visited.add(spdxElementId);
+
+    const childrenIds = dependencyMap.get(spdxElementId) || [];
+    const children = childrenIds
+      .filter((childId) => spdxPackagesMap.has(childId))
+      .map((childId) => buildSpdxDependencyTree(childId, visited));
+
+    return {
+      name: pkg.name,
+      version: pkg.versionInfo,
+      children: children,
+    };
+  };
+
+  return data.packages.map((pkg) => {
+    const purlRef = pkg.externalRefs?.find(
+      (ref) => ref.referenceType === "purl",
+    );
+    return {
+      id: `${sourceName}:${pkg.SPDXID}`,
+      bomRef: purlRef?.referenceLocator || pkg.SPDXID,
+      name: pkg.name,
+      version: pkg.versionInfo,
+      source: sourceName,
+      license:
+        pkg.licenseDeclared === "NOASSERTION"
+          ? "N/A"
+          : pkg.licenseDeclared || "N/A",
+      description: pkg.description || "No description available.",
+      dependencies: buildSpdxDependencyTree(pkg.SPDXID),
+      vulnerabilities: [],
+      scanned: false,
+    };
+  });
+};
+
 export function PackageTable() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -255,11 +425,27 @@ export function PackageTable() {
       for (const sbomFile of sbomsToLoad) {
         try {
           const response = await fetch(`/sboms/${sbomFile}`);
-          const data: CycloneDXBom = await response.json();
-          const loadedPackages = processBomData(data, sbomFile);
+          const data = await response.json();
+          const format = identifySbomFormat(data);
+          let loadedPackages: Package[] = [];
+
+          if (format === SbomFormat.CycloneDX) {
+            loadedPackages = processCycloneDxData(
+              data as CycloneDXBom,
+              sbomFile,
+            );
+          } else if (format === SbomFormat.SPDX) {
+            loadedPackages = processSpdxData(data as SpdxBom, sbomFile);
+          } else {
+            console.error(`Invalid SBOM format for file: ${sbomFile}`);
+          }
+
           allPackages.push(...loadedPackages);
         } catch (error) {
-          console.error(`Error loading SBOM file ${sbomFile}:`, error);
+          console.error(
+            `Error loading or processing SBOM file ${sbomFile}:`,
+            error,
+          );
         }
       }
       setPackages(allPackages);
