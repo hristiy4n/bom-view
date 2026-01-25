@@ -39,12 +39,7 @@ import { cn } from "@/lib/utils";
 import { Dependency } from "./DependencyTree";
 import { columns } from "@/data/columns";
 
-import {
-  Package,
-  SbomFormat,
-  CycloneDXBom,
-  SpdxBom,
-} from "@/lib/sbom/types";
+import { Package, SbomFormat, CycloneDXBom, SpdxBom } from "@/lib/sbom/types";
 import {
   identifySbomFormat,
   processCycloneDxData,
@@ -52,6 +47,8 @@ import {
 } from "@/lib/sbom/parser";
 import { ecosystemMapping } from "@/lib/ecosystems";
 import { OSVResponse, OSVulnerability, Severity } from "@/types/osv";
+import { useSbomData } from "@/hooks/useSbomData";
+import { useOsvScanner } from "@/hooks/useOsvScanner";
 
 const ITEMS_PER_PAGE = 8;
 
@@ -103,96 +100,57 @@ const getPaginationRange = (
 };
 
 export function PackageTable() {
-  const [packages, setPackages] = useState<Package[]>([]);
+  const {
+    packages,
+    setPackages,
+    sbomFiles,
+    selectedSbom,
+    setSelectedSbom,
+    isLoading,
+    error,
+  } = useSbomData();
+  const { scanningIds, isScanningAll, scanPackage, scanAllPackages } =
+    useOsvScanner();
+
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
-  const [scanningAll, setScanningAll] = useState(false);
-  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
-  const [selectedSbom, setSelectedSbom] = useState<string>("all");
-  const [sbomFiles, setSbomFiles] = useState<string[]>([]);
-
-  useEffect(() => {
-    const fetchSbomIndex = async () => {
-      try {
-        const response = await fetch("/sboms/index.json");
-        const data = await response.json();
-        setSbomFiles(data);
-      } catch (error) {
-        console.error("Could not load SBOM index:", error);
-      }
-    };
-    fetchSbomIndex();
-  }, []);
-
-  useEffect(() => {
-    const loadBoms = async () => {
-      if (sbomFiles.length === 0) {
-        return;
-      }
-
-      let sbomsToLoad: string[] = [];
-      if (selectedSbom === "all") {
-        sbomsToLoad = sbomFiles;
-      } else if (selectedSbom) {
-        sbomsToLoad = [selectedSbom];
-      }
-
-      if (sbomsToLoad.length === 0) {
-        setPackages([]);
-        return;
-      }
-
-      const allPackages: Package[] = [];
-      for (const sbomFile of sbomsToLoad) {
-        try {
-          const response = await fetch(`/sboms/${sbomFile}`);
-          const data = await response.json();
-          const format = identifySbomFormat(data);
-          let loadedPackages: Package[] = [];
-
-          if (format === SbomFormat.CycloneDX) {
-            loadedPackages = processCycloneDxData(
-              data as CycloneDXBom,
-              sbomFile,
-            );
-          } else if (format === SbomFormat.SPDX) {
-            loadedPackages = processSpdxData(data as SpdxBom, sbomFile);
-          } else {
-            console.error(`Invalid SBOM format for file: ${sbomFile}`);
-          }
-
-          allPackages.push(...loadedPackages);
-        } catch (error) {
-          console.error(
-            `Error loading or processing SBOM file ${sbomFile}:`,
-            error,
-          );
-        }
-      }
-      setPackages(allPackages);
-    };
-    loadBoms();
-  }, [selectedSbom, sbomFiles]);
-
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [selectedSbom]);
-
-  // Filters
   const [visibleColumns, setVisibleColumns] = useState<string[]>(
     columns.filter((c) => c.visible).map((c) => c.id),
   );
   const [showVulnerableOnly, setShowVulnerableOnly] = useState(false);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedSbom, searchQuery, showVulnerableOnly]);
+
+  const handleScan = async (pkg: Package, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const updatedPackage = await scanPackage(pkg);
+    setPackages((prev) =>
+      prev.map((p) => (p.id === updatedPackage.id ? updatedPackage : p)),
+    );
+  };
+
+  const handleScanAll = async () => {
+    const packagesToScan =
+      selectedSbom === "all"
+        ? packages
+        : packages.filter((p) => p.source === selectedSbom);
+
+    const updatedPackages = await scanAllPackages(packagesToScan);
+    setPackages(updatedPackages);
+  };
 
   const filteredData = packages.filter((pkg) => {
     const matchesSbom = selectedSbom === "all" || pkg.source === selectedSbom;
     const matchesSearch =
       searchQuery === "" ||
       pkg.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pkg.license.toLowerCase().includes(searchQuery.toLowerCase());
+      (pkg.license &&
+        pkg.license.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesVulnerable =
       !showVulnerableOnly || (pkg.scanned && pkg.vulnerabilities.length > 0);
@@ -211,78 +169,6 @@ export function PackageTable() {
     setDetailOpen(true);
   };
 
-  const handleScan = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    setScanningIds((prev) => new Set(prev).add(id));
-
-    const pkg = packages.find((p) => p.id === id);
-    if (!pkg) return;
-
-    const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
-    const ecosystem = purlType ? ecosystemMapping[purlType] : "";
-
-    if (!ecosystem) {
-      console.warn(`Ecosystem not found for package: ${pkg.name}`);
-      setScanningIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      return;
-    }
-
-    try {
-      const response = await fetch("https://api.osv.dev/v1/query", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          version: pkg.version,
-          package: {
-            name: pkg.name,
-            ecosystem: ecosystem,
-          },
-        }),
-      });
-      const results: OSVResponse = await response.json();
-      setPackages((prev) =>
-        prev.map((p) =>
-          p.id === id
-            ? { ...p, vulnerabilities: results.vulns || [], scanned: true }
-            : p,
-        ),
-      );
-    } catch (error) {
-      console.error("Error fetching vulnerabilities:", error);
-    } finally {
-      setScanningIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }
-  };
-
-  const handleScanAll = async () => {
-    setScanningAll(true);
-    const packagesToScan =
-      selectedSbom === "all"
-        ? packages
-        : packages.filter((p) => p.source === selectedSbom);
-
-    const scannablePackages = packagesToScan.filter((pkg) => {
-      const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
-      return purlType ? ecosystemMapping[purlType] : "";
-    });
-
-    const promises = scannablePackages.map((pkg) => {
-      const mockEvent = { stopPropagation: () => {} } as React.MouseEvent;
-      return handleScan(pkg.id, mockEvent);
-    });
-    await Promise.all(promises);
-    setScanningAll(false);
-  };
   const handleColumnChange = (columnId: string) => {
     setVisibleColumns((prev) =>
       prev.includes(columnId)
@@ -295,7 +181,6 @@ export function PackageTable() {
     visibleColumns.includes(columnId);
 
   const activeFiltersCount = showVulnerableOnly ? 1 : 0;
-
   const scannedPackages = filteredData.filter((p) => p.scanned);
 
   const getCVSS = (
@@ -342,6 +227,14 @@ export function PackageTable() {
         .length,
     0,
   );
+
+  if (isLoading && packages.length === 0) {
+    return <div>Loading SBOMs...</div>;
+  }
+
+  if (error) {
+    return <div className="text-destructive">Error: {error}</div>;
+  }
 
   return (
     <div className="space-y-6">
@@ -425,13 +318,16 @@ export function PackageTable() {
           </Button>
           <Button
             onClick={handleScanAll}
-            disabled={scanningAll}
-            className={cn("glow-primary-hover", scanningAll && "animate-scan")}
+            disabled={isScanningAll}
+            className={cn(
+              "glow-primary-hover",
+              isScanningAll && "animate-scan",
+            )}
           >
             <Radar
-              className={cn("h-4 w-4 mr-2", scanningAll && "animate-spin")}
+              className={cn("h-4 w-4 mr-2", isScanningAll && "animate-spin")}
             />
-            {scanningAll ? "Scanning..." : "Scan All"}
+            {isScanningAll ? "Scanning..." : "Scan All"}
           </Button>
         </div>
       </div>
@@ -528,7 +424,7 @@ export function PackageTable() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={(e) => handleScan(pkg.id, e)}
+                          onClick={(e) => handleScan(pkg, e)}
                           disabled={scanningIds.has(pkg.id)}
                           className="hover:bg-primary/10 hover:text-primary"
                         >
