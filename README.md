@@ -1,5 +1,9 @@
 # BOM View
 
+[![License](https://img.shields.io/github/license/hristiy4n/bom-view)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/hristiy4n/bom-view)](https://github.com/hristiy4n/bom-view/releases)
+[![CI](https://github.com/hristiy4n/bom-view/actions/workflows/release.yml/badge.svg)](https://github.com/hristiy4n/bom-view/actions/workflows/release.yml)
+
 A simple, static web application for displaying software dependencies from Software Bill of Materials (SBOM) files. Being a static site, it can be easily hosted on any static web hosting service, such as GitLab Pages, GitHub Pages, or Netlify.
 
 ## Features
