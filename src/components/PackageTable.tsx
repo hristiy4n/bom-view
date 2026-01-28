@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -24,7 +24,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CVSS31, CVSS30 } from "@pandatix/js-cvss";
 import {
   Search,
   SlidersHorizontal,
@@ -35,18 +34,11 @@ import {
   Shield,
   AlertTriangle,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getSeverity } from "@/lib/utils";
 import { Dependency } from "./DependencyTree";
 import { columns } from "@/data/columns";
-
-import { Package, SbomFormat, CycloneDXBom, SpdxBom } from "@/lib/sbom/types";
-import {
-  identifySbomFormat,
-  processCycloneDxData,
-  processSpdxData,
-} from "@/lib/sbom/parser";
+import { Package } from "@/lib/sbom/types";
 import { ecosystemMapping } from "@/lib/ecosystems";
-import { OSVResponse, OSVulnerability, Severity } from "@/types/osv";
 import { useSbomData } from "@/hooks/useSbomData";
 import { useOsvScanner } from "@/hooks/useOsvScanner";
 
@@ -144,24 +136,33 @@ export function PackageTable() {
     setPackages(updatedPackages);
   };
 
-  const filteredData = packages.filter((pkg) => {
-    const matchesSbom = selectedSbom === "all" || pkg.source === selectedSbom;
-    const matchesSearch =
-      searchQuery === "" ||
-      pkg.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (pkg.license &&
-        pkg.license.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredData = useMemo(
+    () =>
+      packages.filter((pkg) => {
+        const matchesSbom =
+          selectedSbom === "all" || pkg.source === selectedSbom;
+        const matchesSearch =
+          searchQuery === "" ||
+          pkg.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (pkg.license &&
+            pkg.license.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    const matchesVulnerable =
-      !showVulnerableOnly || (pkg.scanned && pkg.vulnerabilities.length > 0);
+        const matchesVulnerable =
+          !showVulnerableOnly || (pkg.scanned && pkg.vulnerabilities.length > 0);
 
-    return matchesSbom && matchesSearch && matchesVulnerable;
-  });
+        return matchesSbom && matchesSearch && matchesVulnerable;
+      }),
+    [packages, selectedSbom, searchQuery, showVulnerableOnly],
+  );
 
   const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-  const paginatedData = filteredData.slice(
-    (currentPage - 1) * ITEMS_PER_PAGE,
-    currentPage * ITEMS_PER_PAGE,
+  const paginatedData = useMemo(
+    () =>
+      filteredData.slice(
+        (currentPage - 1) * ITEMS_PER_PAGE,
+        currentPage * ITEMS_PER_PAGE,
+      ),
+    [filteredData, currentPage],
   );
 
   const handleRowClick = (pkg: Package) => {
@@ -181,375 +182,354 @@ export function PackageTable() {
     visibleColumns.includes(columnId);
 
   const activeFiltersCount = showVulnerableOnly ? 1 : 0;
-  const scannedPackages = filteredData.filter((p) => p.scanned);
 
-  const getCVSS = (
-    severity: { type: string; score: string }[],
-  ): number | null => {
-    const cvss = severity?.find((s) => s.type === "CVSS_V3");
-    if (!cvss?.score) return null;
-    try {
-      if (cvss.score.startsWith("CVSS:3.1")) {
-        const cvssObject = new CVSS31(cvss.score);
-        return cvssObject.BaseScore();
-      } else if (cvss.score.startsWith("CVSS:3.0")) {
-        const cvssObject = new CVSS30(cvss.score);
-        return cvssObject.BaseScore();
-      }
-      return null;
-    } catch (error) {
-      console.error("Error parsing CVSS vector for:", cvss.score, error);
-      return null;
-    }
-  };
-
-  const getSeverity = (
-    severity: { type: string; score: string }[],
-  ): Severity => {
-    const cvss = getCVSS(severity);
-    if (cvss === null) return "unknown";
-    if (cvss >= 9.0) return "critical";
-    if (cvss >= 7.0) return "high";
-    if (cvss >= 4.0) return "medium";
-    if (cvss > 0) return "low";
-    return "unknown";
-  };
-
-  const totalVulnerabilities = scannedPackages.reduce(
-    (acc, p) => acc + p.vulnerabilities.length,
-    0,
+  const scannedPackages = useMemo(
+    () => filteredData.filter((p) => p.scanned),
+    [filteredData],
   );
 
-  const criticalCount = scannedPackages.reduce(
-    (acc, p) =>
-      acc +
-      p.vulnerabilities.filter((v) => getSeverity(v.severity) === "critical")
-        .length,
-    0,
+  const totalVulnerabilities = useMemo(
+    () =>
+      scannedPackages.reduce((acc, p) => acc + p.vulnerabilities.length, 0),
+    [scannedPackages],
   );
 
-  if (isLoading && packages.length === 0) {
-    return <div>Loading SBOMs...</div>;
-  }
+  const criticalCount = useMemo(
+    () =>
+      scannedPackages.reduce(
+        (acc, p) =>
+          acc +
+          p.vulnerabilities.filter(
+            (v) => getSeverity(v.severity) === "critical",
+          ).length,
+        0,
+      ),
+    [scannedPackages],
+  );
 
   if (error) {
     return <div className="text-destructive">Error: {error}</div>;
   }
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
-          <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <PackageIcon className="h-6 w-6 text-primary" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-foreground">
-              {filteredData.length}
-            </p>
-            <p className="text-sm text-muted-foreground">Total Packages</p>
-          </div>
-        </div>
-        <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
-          <div className="h-12 w-12 rounded-lg bg-destructive/10 flex items-center justify-center">
-            <Shield className="h-6 w-6 text-destructive" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-foreground">
-              {totalVulnerabilities}
-            </p>
-            <p className="text-sm text-muted-foreground">Vulnerabilities</p>
-          </div>
-        </div>
-        <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
-          <div className="h-12 w-12 rounded-lg bg-severity-critical/10 flex items-center justify-center">
-            <AlertTriangle className="h-6 w-6 text-severity-critical" />
-          </div>
-          <div>
-            <p className="text-2xl font-bold text-foreground">
-              {criticalCount}
-            </p>
-            <p className="text-sm text-muted-foreground">Critical</p>
-          </div>
-        </div>
-      </div>
+    <div className="relative">
 
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div className="flex-1 max-w-md">
-          <Select value={selectedSbom} onValueChange={setSelectedSbom}>
-            <SelectTrigger className="bg-secondary border-border">
-              <SelectValue placeholder="Select SBOM" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All SBOMs</SelectItem>
-              {sbomFiles.map((file) => (
-                <SelectItem key={file} value={file}>
-                  {file}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+      <div className={cn("space-y-6")}>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
+              <PackageIcon className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-foreground">
+                {filteredData.length}
+              </p>
+              <p className="text-sm text-muted-foreground">Total Packages</p>
+            </div>
+          </div>
+          <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-lg bg-destructive/10 flex items-center justify-center">
+              <Shield className="h-6 w-6 text-destructive" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-foreground">
+                {totalVulnerabilities}
+              </p>
+              <p className="text-sm text-muted-foreground">Vulnerabilities</p>
+            </div>
+          </div>
+          <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
+            <div className="h-12 w-12 rounded-lg bg-severity-critical/10 flex items-center justify-center">
+              <AlertTriangle className="h-6 w-6 text-severity-critical" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-foreground">
+                {criticalCount}
+              </p>
+              <p className="text-sm text-muted-foreground">Critical</p>
+            </div>
+          </div>
         </div>
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search packages..."
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="pl-10 bg-secondary border-border"
-          />
-        </div>
-        <div className="flex gap-3">
-          <Button
-            variant="outline"
-            onClick={() => setFilterOpen(true)}
-            className="border-border"
-          >
-            <SlidersHorizontal className="h-4 w-4 mr-2" />
-            Filters
-            {activeFiltersCount > 0 && (
-              <span className="ml-2 h-5 w-5 rounded-full bg-primary text-primary-foreground text-xs flex items-center justify-center">
-                {activeFiltersCount}
-              </span>
-            )}
-          </Button>
-          <Button
-            onClick={handleScanAll}
-            disabled={isScanningAll}
-            className={cn(
-              "glow-primary-hover",
-              isScanningAll && "animate-scan",
-            )}
-          >
-            <Radar
-              className={cn("h-4 w-4 mr-2", isScanningAll && "animate-spin")}
+
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+          <div className="flex-1 max-w-md">
+            <Select value={selectedSbom} onValueChange={setSelectedSbom}>
+              <SelectTrigger className="bg-secondary border-border">
+                <SelectValue placeholder="Select SBOM" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All SBOMs</SelectItem>
+                {sbomFiles.map((file) => (
+                  <SelectItem key={file} value={file}>
+                    {file}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="relative flex-1 max-w-md">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
             />
-            {isScanningAll ? "Scanning..." : "Scan All"}
-          </Button>
+            <Input
+              placeholder="Search packages..."
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+              }}
+              className="pl-10 bg-secondary border-border"
+            />
+          </div>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              onClick={() => setFilterOpen(true)}
+              className="border-border"
+            >
+              <SlidersHorizontal className="h-4 w-4 mr-2" />
+              Filters
+              {activeFiltersCount > 0 && (
+                <span className="ml-2 h-5 w-5 flex items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                  {activeFiltersCount}
+                </span>
+              )}
+            </Button>
+            <Button
+              onClick={handleScanAll}
+              disabled={isScanningAll}
+              className={cn("glow-primary-hover", isScanningAll && "animate-scan")}
+            >
+              <Radar
+                className={cn("h-4 w-4 mr-2", isScanningAll && "animate-spin")}
+              />
+              {isScanningAll ? "Scanning..." : "Scan All"}
+            </Button>
+          </div>
         </div>
-      </div>
 
-      <div className="rounded-lg border border-border overflow-hidden">
-        <TooltipProvider>
-          <Table>
-            <TableHeader>
-              <TableRow className="hover:bg-transparent border-border">
-                {isColumnVisible("name") && (
-                  <TableHead className="text-muted-foreground">
-                    Package
+        <div className="rounded-lg border border-border overflow-hidden">
+          <TooltipProvider>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent border-border">
+                  {isColumnVisible("name") && (
+                    <TableHead className="text-muted-foreground">Package</TableHead>
+                  )}
+                  {isColumnVisible("version") && (
+                    <TableHead className="text-muted-foreground">Version</TableHead>
+                  )}
+                  {isColumnVisible("source") && (
+                    <TableHead className="text-muted-foreground">Source</TableHead>
+                  )}
+                  {isColumnVisible("license") && (
+                    <TableHead className="text-muted-foreground">License</TableHead>
+                  )}
+                  {isColumnVisible("vulnerabilities") && (
+                    <TableHead className="text-muted-foreground">
+                      Vulnerabilities
+                    </TableHead>
+                  )}
+                  <TableHead className="text-muted-foreground text-right">
+                    Actions
                   </TableHead>
-                )}
-                {isColumnVisible("version") && (
-                  <TableHead className="text-muted-foreground">
-                    Version
-                  </TableHead>
-                )}
-                {isColumnVisible("source") && (
-                  <TableHead className="text-muted-foreground">
-                    Source
-                  </TableHead>
-                )}
-                {isColumnVisible("license") && (
-                  <TableHead className="text-muted-foreground">
-                    License
-                  </TableHead>
-                )}
-                {isColumnVisible("vulnerabilities") && (
-                  <TableHead className="text-muted-foreground">
-                    Vulnerabilities
-                  </TableHead>
-                )}
-                <TableHead className="text-muted-foreground text-right">
-                  Actions
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {paginatedData.map((pkg) => {
-                const hasVulnerabilities =
-                  pkg.scanned && pkg.vulnerabilities.length > 0;
-                const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
-                const ecosystem = purlType ? ecosystemMapping[purlType] : "";
-                const isScannable = !!ecosystem;
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {paginatedData.length > 0 &&
+                  paginatedData.map((pkg) => {
+                    const hasVulnerabilities =
+                      pkg.scanned && pkg.vulnerabilities.length > 0;
+                    const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
+                    const ecosystem = purlType
+                      ? ecosystemMapping[purlType]
+                      : "";
+                    const isScannable = !!ecosystem;
 
-                return (
-                  <TableRow
-                    key={pkg.id}
-                    className="table-row-interactive border-border"
-                    onClick={() => handleRowClick(pkg)}
-                  >
-                    {isColumnVisible("name") && (
-                      <TableCell className="font-mono font-medium text-foreground">
-                        {pkg.name}
-                      </TableCell>
-                    )}
-                    {isColumnVisible("version") && (
-                      <TableCell className="font-mono text-sm text-muted-foreground">
-                        {pkg.version}
-                      </TableCell>
-                    )}
-                    {isColumnVisible("source") && (
-                      <TableCell className="font-mono text-sm text-muted-foreground">
-                        {pkg.source}
-                      </TableCell>
-                    )}
-                    {isColumnVisible("license") && (
-                      <TableCell className="text-sm text-muted-foreground">
-                        {pkg.license}
-                      </TableCell>
-                    )}
-                    {isColumnVisible("vulnerabilities") && (
-                      <TableCell>
-                        {!pkg.scanned ? (
-                          <span className="text-sm text-muted-foreground">
-                            —
-                          </span>
-                        ) : hasVulnerabilities ? (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/15 text-destructive border border-destructive/30">
-                            <AlertTriangle className="h-3 w-3" />
-                            {pkg.vulnerabilities.length}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium bg-severity-low/15 text-severity-low border border-severity-low/30">
-                            <Shield className="h-3 w-3" />0
-                          </span>
+                    return (
+                      <TableRow
+                        key={pkg.id}
+                        className="table-row-interactive border-border"
+                        onClick={() => handleRowClick(pkg)}
+                      >
+                        {isColumnVisible("name") && (
+                          <TableCell className="font-mono font-medium text-foreground">
+                            {pkg.name}
+                          </TableCell>
                         )}
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right">
-                      {isScannable ? (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => handleScan(pkg, e)}
-                          disabled={scanningIds.has(pkg.id)}
-                          className="hover:bg-primary/10 hover:text-primary"
-                        >
-                          <Radar
-                            className={cn(
-                              "h-4 w-4",
-                              scanningIds.has(pkg.id) && "animate-spin",
+                        {isColumnVisible("version") && (
+                          <TableCell className="font-mono text-sm text-muted-foreground">
+                            {pkg.version}
+                          </TableCell>
+                        )}
+                        {isColumnVisible("source") && (
+                          <TableCell className="font-mono text-sm text-muted-foreground">
+                            {pkg.source}
+                          </TableCell>
+                        )}
+                        {isColumnVisible("license") && (
+                          <TableCell className="text-sm text-muted-foreground">
+                            {pkg.license}
+                          </TableCell>
+                        )}
+                        {isColumnVisible("vulnerabilities") && (
+                          <TableCell>
+                            {!pkg.scanned ? (
+                              <span className="text-sm text-muted-foreground">
+                                —
+                              </span>
+                            ) : hasVulnerabilities ? (
+                              <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
+                                <AlertTriangle className="h-3 w-3" />
+                                {pkg.vulnerabilities.length}
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 rounded-full bg-severity-low/15 px-2 py-0.5 text-xs font-medium text-severity-low">
+                                <Shield className="h-3 w-3" />0
+                              </span>
                             )}
-                          />
-                          <span className="ml-1">
-                            {scanningIds.has(pkg.id) ? "Scanning" : "Scan"}
-                          </span>
-                        </Button>
-                      ) : (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="inline-block">
-                                <Button
-                                  size="sm"
-                                  variant="ghost"
-                                  disabled
-                                  className="text-muted-foreground/50"
-                                >
-                                  <Radar className="h-4 w-4" />
-                                  <span className="ml-1">Scan</span>
-                                </Button>
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Ecosystem does not exist</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
+                          </TableCell>
+                        )}
+                        <TableCell className="text-right">
+                          {isScannable ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => handleScan(pkg, e)}
+                              disabled={scanningIds.has(pkg.id)}
+                              className="hover:bg-primary/10 hover:text-primary"
+                            >
+                              <Radar
+                                className={cn(
+                                  "h-4 w-4",
+                                  scanningIds.has(pkg.id) && "animate-spin",
+                                )}
+                              />
+                              <span className="ml-1">
+                                {scanningIds.has(pkg.id)
+                                  ? "Scanning"
+                                  : "Scan"}
+                              </span>
+                            </Button>
+                          ) : (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <div className="inline-block">
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      disabled
+                                      className="text-muted-foreground/50"
+                                    >
+                                      <Radar className="h-4 w-4" />
+                                      <span className="ml-1">Scan</span>
+                                    </Button>
+                                  </div>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Ecosystem does not exist</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                {paginatedData.length === 0 && !isLoading && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={visibleColumns.length + 1}
+                      className="h-32 text-center text-muted-foreground"
+                    >
+                      No packages found.
                     </TableCell>
                   </TableRow>
-                );
-              })}
-              {paginatedData.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={visibleColumns.length + 1}
-                    className="h-32 text-center text-muted-foreground"
-                  >
-                    No packages found matching your criteria.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </TooltipProvider>
-      </div>
-
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <p className="text-sm text-muted-foreground">
-            Showing {paginatedData.length} of {filteredData.length} packages
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="border-border"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <div className="flex items-center gap-1">
-              {getPaginationRange(totalPages, currentPage).map((page, index) =>
-                typeof page === "number" ? (
-                  <Button
-                    key={index}
-                    variant={page === currentPage ? "default" : "ghost"}
-                    size="sm"
-                    onClick={() => setCurrentPage(page)}
-                    className={cn(
-                      "w-8 h-8",
-                      page === currentPage && "glow-primary",
-                    )}
-                  >
-                    {page}
-                  </Button>
-                ) : (
-                  <span key={index} className="px-2 py-1 text-muted-foreground">
-                    ...
-                  </span>
-                ),
-              )}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-              disabled={currentPage === totalPages}
-              className="border-border"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
+                )}
+              </TableBody>
+            </Table>
+          </TooltipProvider>
         </div>
-      )}
 
-      <PackageDetail
-        pkg={
-          selectedPackage
-            ? packages.find((p) => p.id === selectedPackage.id) ||
-              selectedPackage
-            : null
-        }
-        open={detailOpen}
-        onClose={() => setDetailOpen(false)}
-      />
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">
+              Showing {paginatedData.length} of {filteredData.length}{" "}
+              packages
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage === 1}
+                className="border-border"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <div className="flex items-center gap-1">
+                {getPaginationRange(totalPages, currentPage).map(
+                  (page, index) =>
+                    typeof page === "number" ? (
+                      <Button
+                        key={index}
+                        variant={page === currentPage ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setCurrentPage(page)}
+                        className={cn(
+                          "w-8 h-8",
+                          page === currentPage && "glow-primary",
+                        )}
+                      >
+                        {page}
+                      </Button>
+                    ) : (
+                      <span
+                        key={index}
+                        className="px-2 py-1 text-muted-foreground"
+                      >
+                        ...
+                      </span>
+                    ),
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setCurrentPage((p) => Math.min(totalPages, p + 1))
+                }
+                disabled={currentPage === totalPages}
+                className="border-border"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
 
-      <FilterSidebar
-        open={filterOpen}
-        onClose={() => setFilterOpen(false)}
-        visibleColumns={visibleColumns}
-        onColumnChange={handleColumnChange}
-        showOutdatedOnly={false}
-        onShowOutdatedChange={() => {}}
-        showVulnerableOnly={showVulnerableOnly}
-        onShowVulnerableChange={setShowVulnerableOnly}
-      />
+        <PackageDetail
+          pkg={
+            selectedPackage
+              ? packages.find((p) => p.id === selectedPackage.id) ||
+                selectedPackage
+              : null
+          }
+          open={detailOpen}
+          onClose={() => setDetailOpen(false)}
+        />
+
+        <FilterSidebar
+          open={filterOpen}
+          onClose={() => setFilterOpen(false)}
+          visibleColumns={visibleColumns}
+          onColumnChange={handleColumnChange}
+          showOutdatedOnly={false}
+          onShowOutdatedChange={() => {}}
+          showVulnerableOnly={showVulnerableOnly}
+          onShowVulnerableChange={setShowVulnerableOnly}
+        />
+      </div>
     </div>
   );
 }
