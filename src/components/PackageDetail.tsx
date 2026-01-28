@@ -1,4 +1,5 @@
-import { Package } from "./PackageTable";
+import { useState, useEffect } from "react";
+import { Package } from "@/lib/sbom/types";
 import {
   Dialog,
   DialogContent,
@@ -6,6 +7,14 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "@/components/ui/table";
 import { DependencyTree } from "./DependencyTree";
 import { VulnerabilityList } from "./VulnerabilityList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,46 +23,96 @@ import {
   GitBranch,
   Shield,
   AlertTriangle,
+  Star,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
-import { CVSS31, CVSS30 } from "@pandatix/js-cvss";
-import { cn } from "@/lib/utils";
-import { OSVulnerability, Severity } from "@/types/osv";
+import { cn, getSeverity } from "@/lib/utils";
+import { Scorecard } from "@/types/scorecard";
+import { getRepoUrl, PURL_REGEX, PackageType } from "@/lib/repo-url-resolver";
 
 interface PackageDetailProps {
   pkg: Package | null;
   open: boolean;
   onClose: () => void;
 }
-const getCVSS = (
-  severity: { type: string; score: string }[],
-): number | null => {
-  const cvss = severity?.find((s) => s.type === "CVSS_V3");
-  if (!cvss?.score) return null;
-  try {
-    if (cvss.score.startsWith("CVSS:3.1")) {
-      const cvssObject = new CVSS31(cvss.score);
-      return cvssObject.BaseScore();
-    } else if (cvss.score.startsWith("CVSS:3.0")) {
-      const cvssObject = new CVSS30(cvss.score);
-      return cvssObject.BaseScore();
-    }
-    return null;
-  } catch (error) {
-    console.error("Error parsing CVSS vector:", error);
-    return null;
-  }
-};
 
-const getSeverity = (severity: { type: string; score: string }[]): Severity => {
-  const cvss = getCVSS(severity);
-  if (cvss === null) return "unknown";
-  if (cvss >= 9.0) return "critical";
-  if (cvss >= 7.0) return "high";
-  if (cvss >= 4.0) return "medium";
-  if (cvss > 0) return "low";
-  return "unknown";
-};
 export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
+  const [scorecard, setScorecard] = useState<Scorecard | null>(null);
+  const [isLoadingScorecard, setIsLoadingScorecard] = useState<boolean>(false);
+  const [scorecardError, setScorecardError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setScorecard(null);
+    setScorecardError(null);
+
+    const fetchScorecardData = async () => {
+      if (!pkg?.bomRef) return;
+
+      const purlParts = pkg.bomRef.match(PURL_REGEX);
+      if (!purlParts) {
+        setScorecardError("Package type not supported.");
+        return;
+      }
+      setIsLoadingScorecard(true);
+
+      try {
+        const [, pkgType, pkgPath] = purlParts;
+        const decodedPath = decodeURIComponent(pkgPath);
+        const atIndex = decodedPath.lastIndexOf("@");
+        const pkgName =
+          atIndex !== -1 ? decodedPath.substring(0, atIndex) : decodedPath;
+
+        let repoUrl = await getRepoUrl(
+          pkgType as PackageType,
+          pkgName,
+          pkg.version,
+        );
+        if (!repoUrl) {
+          setScorecardError("Package type not supported.");
+          return;
+        }
+
+        repoUrl = repoUrl.replace(/^git\+/, "").replace(/\.git(?=#|$)/, "");
+        const url = new URL(repoUrl);
+
+        if (url.hostname !== "github.com") {
+          throw new Error("Repository is not on GitHub.com");
+        }
+
+        const pathParts = url.pathname.split("/").filter((p) => p);
+        if (pathParts.length < 2) throw new Error("Invalid GitHub URL path");
+
+        const [org, repo] = pathParts;
+        const scorecardResponse = await fetch(
+          `https://api.securityscorecards.dev/projects/github.com/${org}/${repo}`,
+        );
+        if (!scorecardResponse.ok) {
+          if (scorecardResponse.status === 404) {
+            setScorecardError("No OpenSSF Scorecard found for this package.");
+            return;
+          }
+          throw new Error(
+            `Scorecard request failed (Status: ${scorecardResponse.status})`,
+          );
+        }
+        const scorecardData = await scorecardResponse.json();
+        setScorecard(scorecardData);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "An unknown error occurred";
+        setScorecardError(message);
+        console.error("Scorecard fetch error:", message);
+      } finally {
+        setIsLoadingScorecard(false);
+      }
+    };
+
+    if (open) {
+      fetchScorecardData();
+    }
+  }, [pkg, open]);
+
   if (!pkg) return null;
 
   const hasVulnerabilities = pkg.vulnerabilities.length > 0;
@@ -66,7 +125,7 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-card border-border">
+      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col bg-card border-border">
         <DialogHeader className="space-y-4">
           <div className="flex items-start justify-between">
             <div className="space-y-2">
@@ -86,64 +145,14 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
           </div>
         </DialogHeader>
 
-        <div className="mt-4">
+        <div className="mt-4 flex-grow overflow-y-auto">
           <DialogDescription asChild>
             <p className="text-sm text-muted-foreground mb-6">
               {pkg.description}
             </p>
           </DialogDescription>
 
-          {pkg.scanned && (
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              <div
-                className={cn(
-                  "rounded-lg border p-3",
-                  hasVulnerabilities
-                    ? "border-destructive/30 bg-destructive/5"
-                    : "border-severity-low/30 bg-severity-low/5",
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <Shield
-                    className={cn(
-                      "h-4 w-4",
-                      hasVulnerabilities
-                        ? "text-destructive"
-                        : "text-severity-low",
-                    )}
-                  />
-                  <span className="text-lg font-bold text-foreground">
-                    {pkg.vulnerabilities.length}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Vulnerabilities
-                </p>
-              </div>
-              {criticalCount > 0 && (
-                <div className="rounded-lg border border-severity-critical/30 bg-severity-critical/5 p-3">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-severity-critical" />
-                    <span className="text-lg font-bold text-foreground">
-                      {criticalCount}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">Critical</p>
-                </div>
-              )}
-              {highCount > 0 && (
-                <div className="rounded-lg border border-severity-high/30 bg-severity-high/5 p-3">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-severity-high" />
-                    <span className="text-lg font-bold text-foreground">
-                      {highCount}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">High</p>
-                </div>
-              )}
-            </div>
-          )}
+          {pkg.scanned && <div className="grid grid-cols-3 gap-4 mb-6"></div>}
 
           <Tabs defaultValue="vulnerabilities" className="w-full">
             <TabsList className="w-full bg-secondary">
@@ -159,6 +168,15 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
               <TabsTrigger value="dependencies" className="flex-1">
                 <GitBranch className="h-4 w-4 mr-2" />
                 Dependency Tree
+              </TabsTrigger>
+              <TabsTrigger value="scorecard" className="flex-1">
+                <Star className="h-4 w-4 mr-2" />
+                Scorecard
+                {scorecard && (
+                  <span className="ml-2 px-1.5 py-0.5 text-xs rounded bg-primary/20 text-primary">
+                    {scorecard.score}
+                  </span>
+                )}
               </TabsTrigger>
             </TabsList>
 
@@ -176,6 +194,86 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
 
             <TabsContent value="dependencies" className="mt-4">
               <DependencyTree rootDependency={pkg.dependencies} />
+            </TabsContent>
+
+            <TabsContent value="scorecard" className="mt-4">
+              {isLoadingScorecard && (
+                <div className="text-center py-8 text-muted-foreground">
+                  <p>Loading OpenSSF Scorecard...</p>
+                </div>
+              )}
+              {!isLoadingScorecard &&
+                scorecardError ===
+                  "No OpenSSF Scorecard found for this package." && (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>No OpenSSF Scorecard available for this package.</p>
+                  </div>
+                )}
+              {!isLoadingScorecard &&
+                scorecardError &&
+                scorecardError !==
+                  "No OpenSSF Scorecard found for this package." && (
+                  <div className="text-center py-8 text-destructive">
+                    <p>Could not load OpenSSF Scorecard.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {scorecardError}
+                    </p>
+                  </div>
+                )}
+              {!isLoadingScorecard && !scorecardError && scorecard && (
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center p-4 rounded-lg bg-secondary">
+                    <div>
+                      <h3 className="font-semibold">Overall Score</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Date: {new Date(scorecard.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <p className="text-4xl font-bold text-primary">
+                      {scorecard.score}
+                    </p>
+                  </div>
+                  <div className="border rounded-lg">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Check</TableHead>
+                          <TableHead className="text-right">Score</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {scorecard.checks.map((check) => (
+                          <TableRow key={check.name}>
+                            <TableCell>
+                              <div className="font-medium flex items-center gap-2">
+                                {check.score > 0 ? (
+                                  <CheckCircle2 className="h-4 w-4 text-green-500" />
+                                ) : (
+                                  <XCircle className="h-4 w-4 text-destructive" />
+                                )}
+                                <a
+                                  href={check.documentation.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="hover:underline"
+                                >
+                                  {check.name}
+                                </a>
+                              </div>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                {check.reason}
+                              </p>
+                            </TableCell>
+                            <TableCell className="text-right font-mono">
+                              {check.score}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
             </TabsContent>
           </Tabs>
         </div>
