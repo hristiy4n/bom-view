@@ -41,55 +41,9 @@ import { Package } from "@/lib/sbom/types";
 import { ecosystemMapping } from "@/lib/ecosystems";
 import { useSbomData } from "@/hooks/useSbomData";
 import { useOsvScanner } from "@/hooks/useOsvScanner";
+import { usePagination } from "@/hooks/usePagination";
 
 const ITEMS_PER_PAGE = 8;
-
-const getPaginationRange = (
-  totalPages: number,
-  currentPage: number,
-  siblings = 1,
-) => {
-  const totalNumbers = siblings * 2 + 3;
-  const totalBlocks = totalNumbers + 2;
-
-  if (totalPages <= totalBlocks) {
-    return Array.from({ length: totalPages }, (_, i) => i + 1);
-  }
-
-  const leftSiblingIndex = Math.max(currentPage - siblings, 1);
-  const rightSiblingIndex = Math.min(currentPage + siblings, totalPages);
-
-  const shouldShowLeftDots = leftSiblingIndex > 2;
-  const shouldShowRightDots = rightSiblingIndex < totalPages - 2;
-
-  const firstPageIndex = 1;
-  const lastPageIndex = totalPages;
-
-  if (!shouldShowLeftDots && shouldShowRightDots) {
-    const leftItemCount = 3 + 2 * siblings;
-    const leftRange = Array.from({ length: leftItemCount }, (_, i) => i + 1);
-    return [...leftRange, "...", totalPages];
-  }
-
-  if (shouldShowLeftDots && !shouldShowRightDots) {
-    const rightItemCount = 3 + 2 * siblings;
-    const rightRange = Array.from(
-      { length: rightItemCount },
-      (_, i) => totalPages - rightItemCount + i + 1,
-    );
-    return [firstPageIndex, "...", ...rightRange];
-  }
-
-  if (shouldShowLeftDots && shouldShowRightDots) {
-    const middleRange = Array.from(
-      { length: rightSiblingIndex - leftSiblingIndex + 1 },
-      (_, i) => leftSiblingIndex + i,
-    );
-    return [firstPageIndex, "...", ...middleRange, "...", lastPageIndex];
-  }
-
-  return [];
-};
 
 export function PackageTable() {
   const {
@@ -148,21 +102,23 @@ export function PackageTable() {
             pkg.license.toLowerCase().includes(searchQuery.toLowerCase()));
 
         const matchesVulnerable =
-          !showVulnerableOnly || (pkg.scanned && pkg.vulnerabilities.length > 0);
+          !showVulnerableOnly ||
+          (pkg.scanned && pkg.vulnerabilities.length > 0);
 
         return matchesSbom && matchesSearch && matchesVulnerable;
       }),
     [packages, selectedSbom, searchQuery, showVulnerableOnly],
   );
 
-  const totalPages = Math.ceil(filteredData.length / ITEMS_PER_PAGE);
-  const paginatedData = useMemo(
-    () =>
-      filteredData.slice(
-        (currentPage - 1) * ITEMS_PER_PAGE,
-        currentPage * ITEMS_PER_PAGE,
-      ),
-    [filteredData, currentPage],
+  const { paginationRange, totalPages, paginatedData } = usePagination({
+    totalItems: filteredData.length,
+    itemsPerPage: ITEMS_PER_PAGE,
+    currentPage,
+  });
+
+  const paginatedItems = useMemo(
+    () => filteredData.slice(paginatedData.startIndex, paginatedData.endIndex),
+    [filteredData, paginatedData],
   );
 
   const handleRowClick = (pkg: Package) => {
@@ -189,8 +145,7 @@ export function PackageTable() {
   );
 
   const totalVulnerabilities = useMemo(
-    () =>
-      scannedPackages.reduce((acc, p) => acc + p.vulnerabilities.length, 0),
+    () => scannedPackages.reduce((acc, p) => acc + p.vulnerabilities.length, 0),
     [scannedPackages],
   );
 
@@ -213,7 +168,6 @@ export function PackageTable() {
 
   return (
     <div className="relative">
-
       <div className={cn("space-y-6")}>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="surface-elevated rounded-lg border border-border p-4 flex items-center gap-4">
@@ -268,9 +222,7 @@ export function PackageTable() {
             </Select>
           </div>
           <div className="relative flex-1 max-w-md">
-            <Search
-              className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground"
-            />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
               placeholder="Search packages..."
               value={searchQuery}
@@ -297,7 +249,10 @@ export function PackageTable() {
             <Button
               onClick={handleScanAll}
               disabled={isScanningAll}
-              className={cn("glow-primary-hover", isScanningAll && "animate-scan")}
+              className={cn(
+                "glow-primary-hover",
+                isScanningAll && "animate-scan",
+              )}
             >
               <Radar
                 className={cn("h-4 w-4 mr-2", isScanningAll && "animate-spin")}
@@ -313,16 +268,24 @@ export function PackageTable() {
               <TableHeader>
                 <TableRow className="hover:bg-transparent border-border">
                   {isColumnVisible("name") && (
-                    <TableHead className="text-muted-foreground">Package</TableHead>
+                    <TableHead className="text-muted-foreground">
+                      Package
+                    </TableHead>
                   )}
                   {isColumnVisible("version") && (
-                    <TableHead className="text-muted-foreground">Version</TableHead>
+                    <TableHead className="text-muted-foreground">
+                      Version
+                    </TableHead>
                   )}
                   {isColumnVisible("source") && (
-                    <TableHead className="text-muted-foreground">Source</TableHead>
+                    <TableHead className="text-muted-foreground">
+                      Source
+                    </TableHead>
                   )}
                   {isColumnVisible("license") && (
-                    <TableHead className="text-muted-foreground">License</TableHead>
+                    <TableHead className="text-muted-foreground">
+                      License
+                    </TableHead>
                   )}
                   {isColumnVisible("vulnerabilities") && (
                     <TableHead className="text-muted-foreground">
@@ -335,8 +298,8 @@ export function PackageTable() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedData.length > 0 &&
-                  paginatedData.map((pkg) => {
+                {paginatedItems.length > 0 &&
+                  paginatedItems.map((pkg) => {
                     const hasVulnerabilities =
                       pkg.scanned && pkg.vulnerabilities.length > 0;
                     const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
@@ -405,9 +368,7 @@ export function PackageTable() {
                                 )}
                               />
                               <span className="ml-1">
-                                {scanningIds.has(pkg.id)
-                                  ? "Scanning"
-                                  : "Scan"}
+                                {scanningIds.has(pkg.id) ? "Scanning" : "Scan"}
                               </span>
                             </Button>
                           ) : (
@@ -436,7 +397,7 @@ export function PackageTable() {
                       </TableRow>
                     );
                   })}
-                {paginatedData.length === 0 && !isLoading && (
+                {paginatedItems.length === 0 && !isLoading && (
                   <TableRow>
                     <TableCell
                       colSpan={visibleColumns.length + 1}
@@ -454,8 +415,7 @@ export function PackageTable() {
         {totalPages > 1 && (
           <div className="flex items-center justify-between">
             <p className="text-sm text-muted-foreground">
-              Showing {paginatedData.length} of {filteredData.length}{" "}
-              packages
+              Showing {paginatedItems.length} of {filteredData.length} packages
             </p>
             <div className="flex items-center gap-2">
               <Button
@@ -468,29 +428,28 @@ export function PackageTable() {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
               <div className="flex items-center gap-1">
-                {getPaginationRange(totalPages, currentPage).map(
-                  (page, index) =>
-                    typeof page === "number" ? (
-                      <Button
-                        key={index}
-                        variant={page === currentPage ? "default" : "ghost"}
-                        size="sm"
-                        onClick={() => setCurrentPage(page)}
-                        className={cn(
-                          "w-8 h-8",
-                          page === currentPage && "glow-primary",
-                        )}
-                      >
-                        {page}
-                      </Button>
-                    ) : (
-                      <span
-                        key={index}
-                        className="px-2 py-1 text-muted-foreground"
-                      >
-                        ...
-                      </span>
-                    ),
+                {paginationRange.map((page, index) =>
+                  typeof page === "number" ? (
+                    <Button
+                      key={index}
+                      variant={page === currentPage ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page)}
+                      className={cn(
+                        "w-8 h-8",
+                        page === currentPage && "glow-primary",
+                      )}
+                    >
+                      {page}
+                    </Button>
+                  ) : (
+                    <span
+                      key={index}
+                      className="px-2 py-1 text-muted-foreground"
+                    >
+                      ...
+                    </span>
+                  ),
                 )}
               </div>
               <Button
