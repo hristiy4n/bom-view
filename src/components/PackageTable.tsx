@@ -42,23 +42,25 @@ import { ecosystemMapping } from "@/lib/ecosystems";
 import { useSbomData } from "@/hooks/useSbomData";
 import { useOsvScanner } from "@/hooks/useOsvScanner";
 import { usePagination } from "@/hooks/usePagination";
+import { usePackageFiltering } from "@/hooks/usePackageFiltering";
 
 const ITEMS_PER_PAGE = 8;
 
 export function PackageTable() {
+  const { packages, setPackages, sbomFiles, isLoading, error } = useSbomData();
+  const { scanningIds, isScanningAll, scanPackage, scanAllPackages } =
+    useOsvScanner({ packages, setPackages });
+
   const {
-    packages,
-    setPackages,
-    sbomFiles,
+    searchQuery,
+    setSearchQuery,
+    showVulnerableOnly,
+    setShowVulnerableOnly,
     selectedSbom,
     setSelectedSbom,
-    isLoading,
-    error,
-  } = useSbomData();
-  const { scanningIds, isScanningAll, scanPackage, scanAllPackages } =
-    useOsvScanner();
+    filteredData,
+  } = usePackageFiltering({ packages });
 
-  const [searchQuery, setSearchQuery] = useState("");
   const [selectedPackage, setSelectedPackage] = useState<Package | null>(null);
   const [detailOpen, setDetailOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -66,7 +68,6 @@ export function PackageTable() {
   const [visibleColumns, setVisibleColumns] = useState<string[]>(
     columns.filter((c) => c.visible).map((c) => c.id),
   );
-  const [showVulnerableOnly, setShowVulnerableOnly] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -90,25 +91,7 @@ export function PackageTable() {
     setPackages(updatedPackages);
   };
 
-  const filteredData = useMemo(
-    () =>
-      packages.filter((pkg) => {
-        const matchesSbom =
-          selectedSbom === "all" || pkg.source === selectedSbom;
-        const matchesSearch =
-          searchQuery === "" ||
-          pkg.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (pkg.license &&
-            pkg.license.toLowerCase().includes(searchQuery.toLowerCase()));
 
-        const matchesVulnerable =
-          !showVulnerableOnly ||
-          (pkg.scanned && pkg.vulnerabilities.length > 0);
-
-        return matchesSbom && matchesSearch && matchesVulnerable;
-      }),
-    [packages, selectedSbom, searchQuery, showVulnerableOnly],
-  );
 
   const { paginationRange, totalPages, paginatedData } = usePagination({
     totalItems: filteredData.length,
