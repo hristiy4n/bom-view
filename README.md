@@ -8,9 +8,10 @@ A simple, static web application for displaying software dependencies from Softw
 
 ## Features
 
-*   **SBOM Viewer**: Displays components from CycloneDX JSON SBOMs in a clear, searchable table.
+*   **SBOM Viewer**: Displays components from CycloneDX/SPDX JSON SBOMs in a clear, searchable table.
 *   **Dynamic Loading**: Add and display SBOMs without rebuilding the site.
 *   **On-Demand Vulnerability Scanning**: Scan individual packages or an entire SBOM for known vulnerabilities using the [osv.dev](https://osv.dev/) database.
+*   **OpenSSF Scorecards**: Enriches package data with security scores from [OpenSSF Scorecard](https://scorecard.dev/), providing insights into supply chain security posture.
 
 ## Supported Formats
 
@@ -22,7 +23,7 @@ This application is designed to load SBOMs dynamically at runtime. To add your o
 
 1.  **Create the `sboms` directory**: If it doesn't already exist, create a directory named `sboms`.
 
-2.  **Add Your SBOMs**: Copy your CycloneDX JSON files into the `sboms` directory.
+2.  **Add Your SBOMs**: Copy your CycloneDX/SPDX JSON files into the `sboms` directory.
 
 3.  **Update the Index File**: Create or update a file named `index.json` inside the `sboms` directory. This file tells the application which SBOMs are available. It must contain a single JSON array of strings, where each string is the filename of an SBOM in that directory.
 
