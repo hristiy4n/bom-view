@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { cn, getSeverity } from "@/lib/utils";
 import { Scorecard } from "@/types/scorecard";
+import { DepsDevProjectData } from "@/types/deps-dev";
 import { getRepoUrl, PURL_REGEX, PackageType } from "@/lib/repo-url-resolver";
 
 interface PackageDetailProps {
@@ -41,7 +42,9 @@ interface PackageDetailProps {
 
 export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
-  const [depsDevData, setDepsDevData] = useState<any | null>(null);
+  const [depsDevData, setDepsDevData] = useState<DepsDevProjectData | null>(
+    null,
+  );
   const [isLoadingScorecard, setIsLoadingScorecard] = useState<boolean>(false);
   const [scorecardError, setScorecardError] = useState<string | null>(null);
 
