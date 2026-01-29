@@ -26,6 +26,8 @@ import {
   Star,
   CheckCircle2,
   XCircle,
+  Home,
+  GitFork,
 } from "lucide-react";
 import { cn, getSeverity } from "@/lib/utils";
 import { Scorecard } from "@/types/scorecard";
@@ -39,12 +41,14 @@ interface PackageDetailProps {
 
 export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
   const [scorecard, setScorecard] = useState<Scorecard | null>(null);
+  const [depsDevData, setDepsDevData] = useState<any | null>(null);
   const [isLoadingScorecard, setIsLoadingScorecard] = useState<boolean>(false);
   const [scorecardError, setScorecardError] = useState<string | null>(null);
 
   useEffect(() => {
     setScorecard(null);
     setScorecardError(null);
+    setDepsDevData(null);
 
     const fetchScorecardData = async () => {
       if (!pkg?.bomRef) return;
@@ -76,16 +80,28 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
         repoUrl = repoUrl.replace(/^git\+/, "").replace(/\.git(?=#|$)/, "");
         const url = new URL(repoUrl);
 
-        if (url.hostname !== "github.com") {
-          throw new Error("Repository is not on GitHub.com");
+        let projectKeyId = "";
+        if (url.hostname === "github.com") {
+          const pathParts = url.pathname.split("/").filter((p) => p);
+          if (pathParts.length < 2) throw new Error("Invalid GitHub URL path");
+          projectKeyId = `github.com/${pathParts[0]}/${pathParts[1]}`;
+        } else if (url.hostname === "gitlab.com") {
+          const pathParts = url.pathname.split("/").filter((p) => p);
+          if (pathParts.length < 2) throw new Error("Invalid GitLab URL path");
+          projectKeyId = `gitlab.com/${pathParts[0]}/${pathParts[1]}`;
+        } else if (url.hostname === "bitbucket.org") {
+          const pathParts = url.pathname.split("/").filter((p) => p);
+          if (pathParts.length < 2)
+            throw new Error("Invalid Bitbucket URL path");
+          projectKeyId = `bitbucket.org/${pathParts[0]}/${pathParts[1]}`;
+        } else {
+          throw new Error(
+            "Repository is not on GitHub.com, GitLab.com, or Bitbucket.org",
+          );
         }
 
-        const pathParts = url.pathname.split("/").filter((p) => p);
-        if (pathParts.length < 2) throw new Error("Invalid GitHub URL path");
-
-        const [org, repo] = pathParts;
         const scorecardResponse = await fetch(
-          `https://api.securityscorecards.dev/projects/github.com/${org}/${repo}`,
+          `https://api.deps.dev/v3/projects/${encodeURIComponent(projectKeyId)}`,
         );
         if (!scorecardResponse.ok) {
           if (scorecardResponse.status === 404) {
@@ -97,7 +113,18 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
           );
         }
         const scorecardData = await scorecardResponse.json();
-        setScorecard(scorecardData);
+        setDepsDevData(scorecardData);
+
+        if (!scorecardData.scorecard) {
+          setScorecardError("No OpenSSF Scorecard found for this package.");
+          return;
+        }
+
+        const mappedScorecard = {
+          ...scorecardData.scorecard,
+          score: scorecardData.scorecard.overallScore,
+        };
+        setScorecard(mappedScorecard);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "An unknown error occurred";
@@ -140,6 +167,32 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
                 <span className="text-xs px-2 py-0.5 rounded bg-secondary text-muted-foreground">
                   {pkg.license}
                 </span>
+                {depsDevData?.starsCount && (
+                  <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <Star className="h-4 w-4" /> {depsDevData.starsCount}
+                  </span>
+                )}
+                {depsDevData?.forksCount && (
+                  <span className="flex items-center gap-1 text-sm text-muted-foreground">
+                    <GitFork className="h-4 w-4" /> {depsDevData.forksCount}
+                  </span>
+                )}
+                {depsDevData &&
+                  (depsDevData.projectKey?.id?.startsWith("github.com/") ||
+                    depsDevData.homepage) && (
+                    <a
+                      href={
+                        depsDevData.projectKey?.id?.startsWith("github.com/")
+                          ? `https://${depsDevData.projectKey.id}`
+                          : depsDevData.homepage
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-primary hover:underline text-sm flex items-center gap-1"
+                    >
+                      <Home className="h-4 w-4" /> Repository
+                    </a>
+                  )}
               </div>
             </div>
           </div>
@@ -148,7 +201,9 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
         <div className="mt-4 flex-grow overflow-y-auto">
           <DialogDescription asChild>
             <p className="text-sm text-muted-foreground mb-6">
-              {pkg.description}
+              {depsDevData?.description ||
+                pkg.description ||
+                "No description available."}
             </p>
           </DialogDescription>
 
