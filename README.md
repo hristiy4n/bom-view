@@ -65,7 +65,7 @@ pages:
   before_script:
     - apk add curl jq
   script:
-    - curl -L https://github.com/hristiy4n/bom-view/releases/download/v0.3.0/bom-view-v0.3.0-dist.tar.gz | tar zx
+    - curl -L https://github.com/hristiy4n/bom-view/releases/download/v0.4.0/bom-view-v0.4.0-dist.tar.gz | tar zx
     - mv dist public
     - mkdir public/sboms
     - cp sboms/* public/sboms
