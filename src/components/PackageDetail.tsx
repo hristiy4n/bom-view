@@ -246,7 +246,10 @@ export function PackageDetail({ pkg, open, onClose }: PackageDetailProps) {
                   </p>
                 </div>
               ) : (
-                <VulnerabilityList vulnerabilities={pkg.vulnerabilities} />
+                <VulnerabilityList
+                  osvVulnerabilities={pkg.vulnerabilities}
+                  sbomVulnerabilities={pkg.sbomVulnerabilities}
+                />
               )}
             </TabsContent>
 

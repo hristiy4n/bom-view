@@ -8,6 +8,7 @@ import {
   Component,
   SpdxPackage,
   SpdxRelationship,
+  SBOMVulnerability,
 } from "./types";
 
 export const identifySbomFormat = (data: SbomData): SbomFormat => {
@@ -33,6 +34,23 @@ export const processCycloneDxData = (
   if (data.dependencies) {
     data.dependencies.forEach((dep) => {
       dependencyMap.set(dep.ref, dep.dependsOn || []);
+    });
+  }
+
+  const componentVulnerabilitiesMap = new Map<string, SBOMVulnerability[]>();
+  if (data.vulnerabilities) {
+    data.vulnerabilities.forEach((sbomVulnerability) => {
+      if (sbomVulnerability.affects && sbomVulnerability.affects.length > 0) {
+        sbomVulnerability.affects.forEach((affected) => {
+          if (affected.ref) {
+            const bomRef = affected.ref.split("?")[0];
+            if (!componentVulnerabilitiesMap.has(bomRef)) {
+              componentVulnerabilitiesMap.set(bomRef, []);
+            }
+            componentVulnerabilitiesMap.get(bomRef)!.push(sbomVulnerability);
+          }
+        });
+      }
     });
   }
 
@@ -79,6 +97,11 @@ export const processCycloneDxData = (
           license = licenseEntry.expression;
         }
       }
+
+      const componentBomRef = component["bom-ref"].split("?")[0];
+      const sbomVulnerabilities =
+        componentVulnerabilitiesMap.get(componentBomRef) || [];
+
       return {
         id: `${sourceName}:${component["bom-ref"]}`,
         bomRef: component["bom-ref"],
@@ -89,12 +112,16 @@ export const processCycloneDxData = (
         description: component.description || "No description available.",
         dependencies: buildDependencyTree(component["bom-ref"]),
         vulnerabilities: [],
-        scanned: false,
+        sbomVulnerabilities: sbomVulnerabilities,
+        scanned: data.vulnerabilities && data.vulnerabilities.length > 0,
       };
     });
 };
 
-export const processSpdxData = (data: SpdxBom, sourceName: string): Package[] => {
+export const processSpdxData = (
+  data: SpdxBom,
+  sourceName: string,
+): Package[] => {
   const spdxPackagesMap = new Map<string, SpdxPackage>();
   data.packages.forEach((pkg) => {
     spdxPackagesMap.set(pkg.SPDXID, pkg);
@@ -169,6 +196,7 @@ export const processSpdxData = (data: SpdxBom, sourceName: string): Package[] =>
       description: pkg.description || "No description available.",
       dependencies: buildSpdxDependencyTree(pkg.SPDXID),
       vulnerabilities: [],
+      sbomVulnerabilities: [],
       scanned: false,
     };
   });

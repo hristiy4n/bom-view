@@ -43,6 +43,10 @@ import { useSbomData } from "@/hooks/useSbomData";
 import { useOsvScanner } from "@/hooks/useOsvScanner";
 import { usePagination } from "@/hooks/usePagination";
 import { usePackageFiltering } from "@/hooks/usePackageFiltering";
+import {
+  getSeverityFromOsvSeverity,
+  getSeverityFromSbomRatings,
+} from "@/lib/vulnerability-utils";
 
 const ITEMS_PER_PAGE = 8;
 
@@ -91,8 +95,6 @@ export function PackageTable() {
     setPackages(updatedPackages);
   };
 
-
-
   const { paginationRange, totalPages, paginatedData } = usePagination({
     totalItems: filteredData.length,
     itemsPerPage: ITEMS_PER_PAGE,
@@ -128,20 +130,26 @@ export function PackageTable() {
   );
 
   const totalVulnerabilities = useMemo(
-    () => scannedPackages.reduce((acc, p) => acc + p.vulnerabilities.length, 0),
+    () =>
+      scannedPackages.reduce(
+        (acc, p) =>
+          acc + p.vulnerabilities.length + p.sbomVulnerabilities.length,
+        0,
+      ),
     [scannedPackages],
   );
 
   const criticalCount = useMemo(
     () =>
-      scannedPackages.reduce(
-        (acc, p) =>
-          acc +
-          p.vulnerabilities.filter(
-            (v) => getSeverity(v.severity) === "critical",
-          ).length,
-        0,
-      ),
+      scannedPackages.reduce((acc, p) => {
+        const osvCritical = p.vulnerabilities.filter(
+          (v) => getSeverityFromOsvSeverity(v.severity) === "critical",
+        ).length;
+        const sbomCritical = p.sbomVulnerabilities.filter(
+          (v) => getSeverityFromSbomRatings(v.ratings) === "critical",
+        ).length;
+        return acc + osvCritical + sbomCritical;
+      }, 0),
     [scannedPackages],
   );
 
@@ -283,8 +291,11 @@ export function PackageTable() {
               <TableBody>
                 {paginatedItems.length > 0 &&
                   paginatedItems.map((pkg) => {
+                    const totalVulnCount =
+                      pkg.vulnerabilities.length +
+                      pkg.sbomVulnerabilities.length;
                     const hasVulnerabilities =
-                      pkg.scanned && pkg.vulnerabilities.length > 0;
+                      pkg.scanned && totalVulnCount > 0;
                     const purlType = pkg.bomRef.match(/pkg:([^/]+)/)?.[1];
                     const ecosystem = purlType
                       ? ecosystemMapping[purlType]
@@ -326,7 +337,7 @@ export function PackageTable() {
                             ) : hasVulnerabilities ? (
                               <span className="inline-flex items-center gap-1.5 rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
                                 <AlertTriangle className="h-3 w-3" />
-                                {pkg.vulnerabilities.length}
+                                {totalVulnCount}
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-1.5 rounded-full bg-severity-low/15 px-2 py-0.5 text-xs font-medium text-severity-low">
