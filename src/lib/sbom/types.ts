@@ -33,6 +33,7 @@ export interface CycloneDXBom {
   };
   components: Component[];
   dependencies?: BomDependency[];
+  vulnerabilities?: SBOMVulnerability[];
 }
 
 export interface SpdxPackage {
@@ -60,6 +61,47 @@ export interface SpdxBom {
   relationships?: SpdxRelationship[];
 }
 
+export interface SBOMVulnerabilityRating {
+  source?: {
+    name?: string;
+    url?: string;
+  };
+  score?: number;
+  severity?: string;
+  method?: string;
+  vector?: string;
+}
+
+export interface SBOMVulnerabilityAdvisory {
+  url?: string;
+}
+
+export interface SBOMVulnerabilityAffectedVersion {
+  version?: string;
+  status?: string;
+}
+
+export interface SBOMVulnerabilityAffected {
+  ref?: string;
+  versions?: SBOMVulnerabilityAffectedVersion[];
+}
+
+export interface SBOMVulnerability {
+  id?: string;
+  source?: {
+    name?: string;
+    url?: string;
+  };
+  ratings?: SBOMVulnerabilityRating[];
+  cwes?: number[];
+  description?: string;
+  recommendation?: string;
+  advisories?: SBOMVulnerabilityAdvisory[];
+  published?: string;
+  updated?: string;
+  affects?: SBOMVulnerabilityAffected[];
+}
+
 export interface Package {
   id: string;
   bomRef: string;
@@ -70,6 +112,7 @@ export interface Package {
   description: string;
   dependencies: Dependency;
   vulnerabilities: OSVulnerability[];
+  sbomVulnerabilities: SBOMVulnerability[];
   scanned: boolean;
 }
 

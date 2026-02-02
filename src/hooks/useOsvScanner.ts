@@ -1,9 +1,14 @@
 import { useState, useCallback } from "react";
-import { Package } from "@/lib/sbom/types";
-import { OSVResponse } from "@/types/osv";
+import { Package, SBOMVulnerability } from "@/lib/sbom/types";
+import { OSVResponse, OSVulnerability } from "@/types/osv";
 import { ecosystemMapping } from "@/lib/ecosystems";
 
-export function useOsvScanner() {
+interface UseOsvScannerProps {
+  packages: Package[];
+  setPackages: React.Dispatch<React.SetStateAction<Package[]>>;
+}
+
+export function useOsvScanner({ packages, setPackages }: UseOsvScannerProps) {
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set());
   const [isScanningAll, setIsScanningAll] = useState<boolean>(false);
 
@@ -38,10 +43,31 @@ export function useOsvScanner() {
         );
       }
       const results: OSVResponse = await response.json();
-      return { ...pkg, vulnerabilities: results.vulns || [], scanned: true };
+      const osvVulns = results.vulns || [];
+
+      const sbomVulnIds = new Set<string>();
+      pkg.sbomVulnerabilities.forEach((sbomVuln) => {
+        if (sbomVuln.id) sbomVulnIds.add(sbomVuln.id);
+      });
+
+      const uniqueOsvVulns = osvVulns.filter((osvVuln) => {
+        if (osvVuln.id && sbomVulnIds.has(osvVuln.id)) {
+          return false;
+        }
+        if (osvVuln.aliases) {
+          for (const alias of osvVuln.aliases) {
+            if (sbomVulnIds.has(alias)) {
+              return false;
+            }
+          }
+        }
+        return true;
+      });
+
+      return { ...pkg, vulnerabilities: uniqueOsvVulns, scanned: true };
     } catch (error) {
       console.error(`Error fetching vulnerabilities for ${pkg.name}:`, error);
-      return { ...pkg, vulnerabilities: [], scanned: true }; // Mark as scanned even on error
+      return { ...pkg, vulnerabilities: [], scanned: true };
     } finally {
       setScanningIds((prev) => {
         const next = new Set(prev);
