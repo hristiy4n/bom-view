@@ -50,10 +50,15 @@ import {
 
 const ITEMS_PER_PAGE = 8;
 
-export function PackageTable() {
-  const { packages, setPackages, sbomFiles, isLoading, error } = useSbomData();
+interface PackageTableProps {
+  sbomData: ReturnType<typeof useSbomData>;
+  osvScanner: ReturnType<typeof useOsvScanner>;
+}
+
+export function PackageTable({ sbomData, osvScanner }: PackageTableProps) {
+  const { packages, setPackages, sbomFiles, isLoading, error } = sbomData;
   const { scanningIds, isScanningAll, scanPackage, scanAllPackages } =
-    useOsvScanner({ packages, setPackages });
+    osvScanner;
 
   const {
     searchQuery,
